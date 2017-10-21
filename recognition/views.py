@@ -15,6 +15,21 @@ class PaintingViewSet(mixins.RetrieveModelMixin,
     serializer_class = PaintingSerializer
 
 
+class ProgramAPIView(generics.GenericAPIView):
+    def get(self, request, format=None):
+        return Response(data={
+            "data": [
+                {
+                    "title": "Город и люди. Москва в графике ХХ века",
+                    "dates": "11 октября 2017 - 28 января 2018",
+                    "picture": "https://www.tretyakovgallery.ru/upload/iblock/951/95170e80eebc1f942139bf69536af350.jpg",
+                    "location": "Новая Третьяковка",
+                    "description": "А.А. Дейнека. Площадь Свердлова. 1941–1946. Серия «Москва военная». Бумага, гуашь, темпера, уголь. 67 х 81,7. Третьяковская галерея"
+                }
+            ]
+        })
+
+
 class RecognizeAPIView(generics.GenericAPIView):
     serializer_class = RecognizeSerializer
 
