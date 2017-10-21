@@ -11,6 +11,6 @@ class Painting(models.Model):
     author = models.ForeignKey(Author)
     title = models.CharField(max_length=256)
     image = models.ImageField(upload_to='paintings')
-    site_url = models.CharField(max_length=256)
+    site_url = models.CharField(max_length=256, unique=True)
     years = models.CharField(max_length=256)
     description = models.TextField()

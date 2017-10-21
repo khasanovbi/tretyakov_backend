@@ -112,6 +112,12 @@ async def get_painting_metainfo(url, semaphore):
 
 def save_painting(metainfo, binary_image):
     author, _ = Author.objects.get_or_create(**metainfo['author'])
+    site_url = metainfo['site_url']
+    old_painting = Painting.objects.filter(site_url=site_url).first()
+    if old_painting:
+        logger.debug('Skip painting saving %s', site_url)
+        return
+
     painting = Painting(
         author=author,
         site_url=metainfo['site_url'],
@@ -120,7 +126,6 @@ def save_painting(metainfo, binary_image):
         description=metainfo['description'],
     )
     painting.image.save(metainfo['filename'], ContentFile(binary_image))
-    # painting.save()
 
 
 async def fetch_image(metainfo, semaphore):
