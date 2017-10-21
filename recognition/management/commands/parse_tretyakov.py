@@ -2,6 +2,7 @@ import asyncio
 import copy
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from itertools import chain
 
 import aiohttp
@@ -9,8 +10,9 @@ from bs4 import BeautifulSoup
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.core.management.base import BaseCommand
+from django.db.transaction import atomic
 
-from recognition.models import Painting, Author
+from recognition.models import Author, Painting
 
 BASE_URL = 'https://www.tretyakovgallery.ru'
 
@@ -18,6 +20,9 @@ PAINTING_LIST_URL_TEMPLATE = BASE_URL + '/collection/?category=all&period=all&pa
 PAINTINGS_DIR = os.path.join(settings.STATIC_ROOT, 'paintings')
 
 logger = logging.getLogger('tretyakov.parser')
+
+# To don't lock sqlite 1 worker used
+thread_pool_executor = ThreadPoolExecutor(max_workers=1)
 
 
 def get_absolute_url(relative_url):
@@ -110,6 +115,7 @@ async def get_painting_metainfo(url, semaphore):
     }
 
 
+@atomic
 def save_painting(metainfo, binary_image):
     author, _ = Author.objects.get_or_create(**metainfo['author'])
     site_url = metainfo['site_url']
@@ -134,7 +140,12 @@ async def fetch_image(metainfo, semaphore):
         async with semaphore:
             async with session.get(image_url) as resp:
                 binary_image = await resp.read()
-    await asyncio.get_event_loop().run_in_executor(None, save_painting, metainfo, binary_image)
+    await asyncio.get_event_loop().run_in_executor(
+        thread_pool_executor,
+        save_painting,
+        metainfo,
+        binary_image
+    )
     logger.info('Save file %s', metainfo['filename'])
 
 
