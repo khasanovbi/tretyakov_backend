@@ -201,8 +201,6 @@ async def run_parser(pages_count=None):
 
 
 class Command(BaseCommand):
-    help = 'Closes the specified poll for voting'
-
     def add_arguments(self, parser):
         parser.add_argument('pages', nargs='?', type=int)
 

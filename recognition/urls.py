@@ -1,7 +1,7 @@
 from django.conf.urls import include, url
 from rest_framework import routers
 
-from recognition.views import PaintingViewSet, RecognizeAPIView, ProgramAPIView
+from recognition.views import PaintingViewSet, ProgramAPIView, RecognizeAPIView
 
 router = routers.SimpleRouter()
 router.register(r'painting', PaintingViewSet)
