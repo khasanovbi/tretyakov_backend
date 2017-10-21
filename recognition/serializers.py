@@ -26,7 +26,13 @@ class AuthorSerializer(serializers.ModelSerializer):
             instance = author.paintings.exclude(id=exclude_painting_id)
         else:
             instance = author.paintings
-        return _PaintingSerializer(instance=instance, many=True, read_only=True).data
+        serializer = _PaintingSerializer(
+            instance=instance,
+            many=True,
+            read_only=True,
+            context=self.context,
+        )
+        return serializer.data
 
 
 class PaintingSerializer(serializers.ModelSerializer):
@@ -37,5 +43,10 @@ class PaintingSerializer(serializers.ModelSerializer):
         fields = ('id', 'author', 'title', 'image', 'years', 'description')
 
     def get_author(self, obj):
-        serializer_context = {'exclude_painting_id': obj.id}
-        return AuthorSerializer(obj.author, context=serializer_context).data
+        context = self.context
+        context['exclude_painting_id'] = obj.id
+        return AuthorSerializer(obj.author, context=context).data
+
+
+class RecognizeSerializer(serializers.Serializer):
+    file = serializers.FileField()
