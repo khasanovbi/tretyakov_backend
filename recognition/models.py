@@ -8,7 +8,7 @@ class Author(models.Model):
 
 
 class Painting(models.Model):
-    author = models.ForeignKey(Author)
+    author = models.ForeignKey(Author, related_name='paintings')
     title = models.CharField(max_length=256)
     image = models.ImageField(upload_to='paintings')
     site_url = models.CharField(max_length=256, unique=True)
