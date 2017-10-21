@@ -27,4 +27,4 @@ class RecognizeAPIView(generics.GenericAPIView):
         painting_id = main(tempfile_.name)
 
         painting = Painting.objects.get(id=painting_id)
-        return Response(PaintingSerializer(painting).data)
+        return Response(PaintingSerializer(painting, context=self.get_serializer_context()).data)
