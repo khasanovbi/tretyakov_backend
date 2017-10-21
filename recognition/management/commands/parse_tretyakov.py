@@ -4,11 +4,13 @@ import logging
 import os
 from itertools import chain
 
-import aiofiles
 import aiohttp
 from bs4 import BeautifulSoup
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.core.management.base import BaseCommand
+
+from recognition.models import Painting, Author
 
 BASE_URL = 'https://www.tretyakovgallery.ru'
 
@@ -65,10 +67,10 @@ async def get_painting_metainfo(url, semaphore):
     split_result = title_with_year.rsplit('.', 1)
     if len(split_result) == 1:
         title = title_with_year.strip()
-        year = None
+        years = None
     else:
         title = split_result[0].strip()
-        year = split_result[1].strip()
+        years = split_result[1].strip()
 
     soup.find('div', {'class': 'exhibit-some__title'})
 
@@ -82,28 +84,53 @@ async def get_painting_metainfo(url, semaphore):
 
     author = soup.find(attrs={'class': 'exhibit-info__author'}).a.string
 
+    split_name = author.rsplit(' ', 2)
+    split_name_len = len(split_name)
+
+    first_name = middle_name = None
+    if split_name_len == 1:
+        last_name = split_name[0]
+    elif split_name_len == 2:
+        last_name, first_name = split_name
+    else:
+        last_name, first_name, middle_name = split_name
+
     return {
         'site_url': url,
         'title': title,
         'image_url': image_url,
-        'years': year,
+        'years': years,
         'description': description,
-        'author': author,
+        'author': {
+            'first_name': first_name,
+            'last_name': last_name,
+            'middle_name': middle_name,
+        },
         'related_image_urls': related_image_urls,
     }
 
 
+def save_painting(metainfo, binary_image):
+    author, _ = Author.objects.get_or_create(**metainfo['author'])
+    painting = Painting(
+        author=author,
+        site_url=metainfo['site_url'],
+        title=metainfo['title'],
+        years=metainfo['years'],
+        description=metainfo['description'],
+    )
+    painting.image.save(metainfo['filename'], ContentFile(binary_image))
+    # painting.save()
+
+
 async def fetch_image(metainfo, semaphore):
     image_url = metainfo['image_url']
-    filepath = metainfo['filepath']
     async with aiohttp.ClientSession() as session:
         async with semaphore:
             async with session.get(image_url) as resp:
                 binary_image = await resp.read()
-
-    async with aiofiles.open(filepath, mode='wb') as f:
-        await f.write(binary_image)
-    logger.info('Save file %s', filepath)
+    await asyncio.get_event_loop().run_in_executor(None, save_painting, metainfo, binary_image)
+    logger.info('Save file %s', metainfo['filename'])
 
 
 def normalize_metainfo_list(raw_metainfo_list):
@@ -112,8 +139,8 @@ def normalize_metainfo_list(raw_metainfo_list):
         item_metainfo = copy.copy(item_raw_metainfo)
         image_url = item_raw_metainfo['image_url']
         _, ext = os.path.splitext(image_url)
-        filepath = os.path.join(PAINTINGS_DIR, f'{item_raw_metainfo["title"]}{ext}')
-        item_metainfo['filepath'] = filepath
+        filename = f'{item_raw_metainfo["title"]}{ext}'
+        item_metainfo['filename'] = filename
         metainfo_list.append(item_metainfo)
 
     return metainfo_list
