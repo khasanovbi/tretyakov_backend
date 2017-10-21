@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from itertools import chain
 
 import aiohttp
+import re
 from bs4 import BeautifulSoup
 from django.conf import settings
 from django.core.files.base import ContentFile
@@ -25,6 +26,9 @@ logger = logging.getLogger('tretyakov.parser')
 thread_pool_executor = ThreadPoolExecutor(max_workers=1)
 
 
+alias_re = re.compile(r'\(.*\)$')
+
+
 def get_absolute_url(relative_url):
     return f'{BASE_URL}{relative_url}'
 
@@ -39,7 +43,7 @@ async def parse_paintings_list(page, semaphore):
                  .find('div', {'class': 'collections__list'})
                  .find_all('a', {'class': 'collections-item'}))
     logger.debug('Images list item links from page %s finished', page)
-    return [painting['href'] for painting in paintings]
+    return [get_absolute_url(painting['href']) for painting in paintings]
 
 
 async def get_pages_count():
@@ -79,26 +83,22 @@ async def get_painting_metainfo(url, semaphore):
 
     soup.find('div', {'class': 'exhibit-some__title'})
 
-    related_image_link_tags = soup.find_all('a', {'class': 'collections-item'})
-
-    related_image_urls = []
-    for related_image_link_tag in related_image_link_tags:
-        related_image_urls.append(get_absolute_url(related_image_link_tag['href']))
-
     description = soup.find(attrs={'class': 'exhibit__info'}).p.get_text().strip()
 
     author = soup.find(attrs={'class': 'exhibit-info__author'}).a.string
-
-    split_name = author.rsplit(' ', 2)
-    split_name_len = len(split_name)
-
+    author = alias_re.sub('', author).strip()
     first_name = middle_name = None
-    if split_name_len == 1:
-        last_name = split_name[0]
-    elif split_name_len == 2:
-        last_name, first_name = split_name
+    if 'Неизвестный художник' in author:
+        last_name = author
     else:
-        last_name, first_name, middle_name = split_name
+        split_name = author.rsplit(' ', 2)
+        split_name_len = len(split_name)
+        if split_name_len == 1:
+            last_name = split_name[0]
+        elif split_name_len == 2:
+            last_name, first_name = split_name
+        else:
+            last_name, first_name, middle_name = split_name
 
     return {
         'site_url': url,
@@ -111,7 +111,6 @@ async def get_painting_metainfo(url, semaphore):
             'last_name': last_name,
             'middle_name': middle_name,
         },
-        'related_image_urls': related_image_urls,
     }
 
 
@@ -146,7 +145,7 @@ async def fetch_image(metainfo, semaphore):
         metainfo,
         binary_image
     )
-    logger.info('Save file %s', metainfo['filename'])
+    logger.info('Save %s', metainfo['title'])
 
 
 def normalize_metainfo_list(raw_metainfo_list):
@@ -163,24 +162,31 @@ def normalize_metainfo_list(raw_metainfo_list):
 
 
 async def run_parser(pages_count=None):
-    if not pages_count:
-        pages_count = await get_pages_count()
+    max_pages_count = await get_pages_count()
+    pages_count = min(pages_count, max_pages_count) if pages_count else max_pages_count
 
     logger.info('Parse list items links')
     links_semaphore = asyncio.Semaphore(50)
     tasks = []
     for page in range(1, pages_count + 1):
         tasks.append(parse_paintings_list(page, links_semaphore))
-    urls = list(chain.from_iterable(await asyncio.gather(*tasks)))
+    site_urls = list(chain.from_iterable(await asyncio.gather(*tasks)))
+
+    site_urls = set(site_urls)
+    site_urls = site_urls.difference(Painting.objects.values_list('site_url', flat=True))
+    if not site_urls:
+        return pages_count
 
     logger.info('Fetch meta info')
     meta_semaphore = asyncio.Semaphore(20)
     tasks = []
-    for url in urls:
-        tasks.append(get_painting_metainfo(get_absolute_url(url), meta_semaphore))
+    for url in site_urls:
+        tasks.append(get_painting_metainfo(url, meta_semaphore))
     raw_metainfo_list = [item_metainfo
                          for item_metainfo in await asyncio.gather(*tasks)
                          if item_metainfo]
+    if not raw_metainfo_list:
+        return pages_count
 
     metainfo_list = normalize_metainfo_list(raw_metainfo_list)
 
@@ -191,6 +197,7 @@ async def run_parser(pages_count=None):
     for item_metainfo in metainfo_list:
         tasks.append(fetch_image(item_metainfo, images_semaphore))
     await asyncio.wait(tasks)
+    return pages_count
 
 
 class Command(BaseCommand):
@@ -202,7 +209,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         pages = options["pages"]
         loop = asyncio.get_event_loop()
-        loop.run_until_complete(run_parser(pages))
+        pages = loop.run_until_complete(run_parser(pages))
         loop.close()
 
         self.stdout.write(self.style.SUCCESS(f'Successfully parse {pages} page(s)'))
